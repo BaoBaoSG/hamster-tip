@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HamsterTip — Squeekchain</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js"></script>
+<style>
+  :root{--bg:#0d0d0d;--card:#1a1a1a;--accent:#f5a623;--text:#e0e0e0;--dim:#888;--red:#e05c5c}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;min-height:100vh;padding:24px 16px}
+  h1{color:var(--accent);font-size:2rem;letter-spacing:2px;text-align:center;margin-bottom:4px}
+  .sub{text-align:center;color:var(--dim);font-size:.85rem;margin-bottom:32px}
+  .card{background:var(--card);border:1px solid #2a2a2a;border-radius:8px;padding:20px;margin-bottom:20px}
+  .card h2{color:var(--accent);font-size:1rem;margin-bottom:16px;letter-spacing:1px}
+  input,textarea{width:100%;background:#111;border:1px solid #333;border-radius:4px;color:var(--text);
+    font-family:inherit;font-size:.9rem;padding:10px;margin-bottom:12px;outline:none}
+  input:focus,textarea:focus{border-color:var(--accent)}
+  textarea{resize:vertical;min-height:60px}
+  button{background:var(--accent);border:none;border-radius:4px;color:#000;cursor:pointer;
+    font-family:inherit;font-size:.9rem;font-weight:700;padding:10px 20px;width:100%;letter-spacing:1px}
+  button:hover{opacity:.85}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  #connect-btn{background:#222;color:var(--accent);border:1px solid var(--accent)}
+  .status{font-size:.8rem;color:var(--dim);margin-top:8px;min-height:20px;word-break:break-all}
+  .status.ok{color:#6fcf6f}
+  .status.err{color:var(--red)}
+  .tip-row{border-bottom:1px solid #222;padding:10px 0;font-size:.82rem}
+  .tip-row:last-child{border-bottom:none}
+  .tip-addr{color:var(--accent);font-size:.75rem}
+  .tip-amount{color:#6fcf6f;font-weight:700}
+  .tip-msg{color:var(--text);margin-top:4px}
+  .tip-time{color:var(--dim);font-size:.7rem;margin-top:2px}
+  .lb-row{display:flex;align-items:center;gap:12px;padding:6px 0;font-size:.82rem;border-bottom:1px solid #1e1e1e}
+  .lb-rank{color:var(--accent);width:24px;font-weight:700}
+  .lb-addr{color:var(--dim);flex:1;font-size:.75rem;overflow:hidden;text-overflow:ellipsis}
+  .lb-total{color:#6fcf6f;font-size:.8rem}
+  .stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:0}
+  .stat{flex:1;text-align:center;min-width:80px}
+  .stat-val{font-size:1.4rem;color:var(--accent);font-weight:700}
+  .stat-lbl{font-size:.7rem;color:var(--dim);margin-top:2px}
+  #wallet-info{text-align:right;font-size:.75rem;color:var(--dim);margin-bottom:16px}
+  #wallet-info span{color:var(--accent)}
+  .empty{color:var(--dim);font-size:.82rem;text-align:center;padding:16px 0}
+</style>
+</head>
+<body>
+
+<h1>🐹 HAMSTER TIP</h1>
+<p class="sub">Tip ETH to the hamster economy · Squeekchain Sepolia</p>
+
+<div id="wallet-info">Wallet: <span id="wallet-addr">not connected</span></div>
+
+<div class="card">
+  <h2>⚡ CONNECT</h2>
+  <button id="connect-btn" onclick="connectWallet()">Connect MetaMask</button>
+  <div class="status" id="connect-status"></div>
+</div>
+
+<div class="card">
+  <h2>💸 SEND TIP</h2>
+  <input id="tip-amount" type="number" step="0.001" min="0.001" placeholder="Amount (ETH)" value="0.001"/>
+  <textarea id="tip-msg" placeholder="Message to the hamster (max 140 chars)" maxlength="140"></textarea>
+  <button id="tip-btn" onclick="sendTip()" disabled>Send Tip</button>
+  <div class="status" id="tip-status"></div>
+</div>
+
+<div class="card">
+  <h2>📊 STATS</h2>
+  <div class="stats">
+    <div class="stat"><div class="stat-val" id="stat-tips">—</div><div class="stat-lbl">TOTAL TIPS</div></div>
+    <div class="stat"><div class="stat-val" id="stat-eth">—</div><div class="stat-lbl">ETH TIPPED</div></div>
+    <div class="stat"><div class="stat-val" id="stat-tippers">—</div><div class="stat-lbl">TIPPERS</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🏆 LEADERBOARD</h2>
+  <div id="leaderboard-list"><div class="empty">Loading...</div></div>
+</div>
+
+<div class="card">
+  <h2>📜 RECENT TIPS</h2>
+  <div id="tips-list"><div class="empty">Loading...</div></div>
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────────────────────────
+// Replace CONTRACT_ADDRESS after deploying HamsterTip.sol on Sepolia
+const CONTRACT_ADDRESS = "0x20D901D65c3801774FBeb147A1D04818584C9d2c";
+const SEPOLIA_CHAIN_ID = "0xaa36a7";
+
+const ABI = [
+  "function tip(string calldata message) external payable",
+  "function getTips() external view returns (tuple(address tipper,uint256 amount,string message,uint256 timestamp)[])",
+  "function tipCount() external view returns (uint256)",
+  "function getLeaderboard() external view returns (address[10])",
+  "function totalTipped(address) external view returns (uint256)",
+  "event Tipped(address indexed tipper, uint256 amount, string message)"
+];
+
+let provider, signer, contract;
+
+// ── WALLET ──────────────────────────────────────────────────────────────────
+async function connectWallet() {
+  const status = document.getElementById("connect-status");
+  try {
+    if (!window.ethereum) throw new Error("MetaMask not found");
+
+    // Switch to Sepolia
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: SEPOLIA_CHAIN_ID }] });
+    } catch (e) {
+      if (e.code === 4902) {
+        await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
+          chainId: SEPOLIA_CHAIN_ID,
+          chainName: "Sepolia",
+          rpcUrls: ["https://rpc.sepolia.org"],
+          nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }
+        }]});
+      }
+    }
+
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer   = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+    const addr = await signer.getAddress();
+    document.getElementById("wallet-addr").textContent = addr.slice(0,6)+"…"+addr.slice(-4);
+    document.getElementById("tip-btn").disabled = false;
+    status.className = "status ok";
+    status.textContent = "Connected: " + addr;
+
+    loadData();
+  } catch (e) {
+    status.className = "status err";
+    status.textContent = e.message;
+  }
+}
+
+// ── TIP ─────────────────────────────────────────────────────────────────────
+async function sendTip() {
+  const btn    = document.getElementById("tip-btn");
+  const status = document.getElementById("tip-status");
+  const amount = document.getElementById("tip-amount").value;
+  const msg    = document.getElementById("tip-msg").value.trim();
+
+  if (!contract) { status.className="status err"; status.textContent="Connect wallet first"; return; }
+  if (!amount || parseFloat(amount) <= 0) { status.className="status err"; status.textContent="Enter valid amount"; return; }
+
+  try {
+    btn.disabled = true;
+    status.className = "status";
+    status.textContent = "Sending transaction…";
+
+    const tx = await contract.tip(msg, { value: ethers.parseEther(amount) });
+    status.textContent = "Pending: " + tx.hash;
+    await tx.wait();
+
+    status.className = "status ok";
+    status.textContent = "✓ Tipped! tx: " + tx.hash;
+    document.getElementById("tip-msg").value = "";
+    loadData();
+  } catch (e) {
+    status.className = "status err";
+    status.textContent = e.reason || e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── DATA ─────────────────────────────────────────────────────────────────────
+async function loadData() {
+  if (!contract) return;
+  try {
+    const [tips, lb] = await Promise.all([contract.getTips(), contract.getLeaderboard()]);
+
+    // Stats
+    let totalEth = 0n;
+    const tippers = new Set();
+    tips.forEach(t => { totalEth += t.amount; tippers.add(t.tipper); });
+    document.getElementById("stat-tips").textContent   = tips.length;
+    document.getElementById("stat-eth").textContent    = parseFloat(ethers.formatEther(totalEth)).toFixed(4);
+    document.getElementById("stat-tippers").textContent = tippers.size;
+
+    // Leaderboard
+    const lbEl = document.getElementById("leaderboard-list");
+    const lbHtml = [];
+    for (let i = 0; i < 10; i++) {
+      const addr = lb[i];
+      if (!addr || addr === ethers.ZeroAddress) break;
+      const total = await contract.totalTipped(addr);
+      lbHtml.push(`<div class="lb-row">
+        <div class="lb-rank">#${i+1}</div>
+        <div class="lb-addr">${addr.slice(0,8)}…${addr.slice(-6)}</div>
+        <div class="lb-total">${parseFloat(ethers.formatEther(total)).toFixed(4)} ETH</div>
+      </div>`);
+    }
+    lbEl.innerHTML = lbHtml.length ? lbHtml.join("") : '<div class="empty">No tippers yet</div>';
+
+    // Recent tips (newest first, max 20)
+    const tipsEl = document.getElementById("tips-list");
+    const recent = [...tips].reverse().slice(0, 20);
+    if (!recent.length) { tipsEl.innerHTML = '<div class="empty">No tips yet — be first!</div>'; return; }
+    tipsEl.innerHTML = recent.map(t => {
+      const date = new Date(Number(t.timestamp) * 1000).toLocaleString();
+      return `<div class="tip-row">
+        <div class="tip-addr">${t.tipper.slice(0,8)}…${t.tipper.slice(-6)}</div>
+        <div class="tip-amount">${parseFloat(ethers.formatEther(t.amount)).toFixed(4)} ETH</div>
+        ${t.message ? `<div class="tip-msg">"${escHtml(t.message)}"</div>` : ""}
+        <div class="tip-time">${date}</div>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    console.error("loadData:", e);
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// Auto-refresh every 30s
+setInterval(() => loadData(), 30000);
+</script>
+</body>
+</html>
